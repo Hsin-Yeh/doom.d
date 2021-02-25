@@ -1,0 +1,386 @@
+#+TITLE: Doom Emacs configuration file
+#+AUTHOR: Hsin-Yeh Wu
+#+BABEL: :cache yes
+#+LATEX_HEADER: \usepackage{parskip}
+#+LATEX_HEADER: \usepackage{inconsolata}
+#+LATEX_HEADER: \usepackage[utf8]{inputenc}
+#+PROPERTY: header-args :tangle yes
+
+* About
+This is an Emacs configuration file written in org mode.
+
+* Initialization
+** Identification
+#+begin_src emacs-lisp :tangle yes
+
+;; $DOOMDIR/config.el -*- lexical-binding: t; -*-
+
+;; Place your private configuration here! Remember, you do not need to run 'doom
+;; sync' after modifying this file!
+
+;; Some functionality uses this to identify you, e.g. GPG configuration, email
+;; clients, file templates and snippets.
+(setq user-full-name "Hsin-Yeh Wu"
+      user-mail-address "thankyouyou06@gmail.com")
+
+#+end_src
+** setting up auto tangle
+Copy these code from https://github.com/larstvei/dot-emacs
+
+When this configuration is loaded for the first time, the ~init.el~ is
+the file that is loaded. It looks like this:
+
+#+BEGIN_SRC emacs-lisp :tangle no
+;; This file replaces itself with the actual configuration at first run.
+
+;; We can't tangle without org!
+(require 'org)
+;; Open the configuration
+(find-file (concat user-emacs-directory "config.org"))
+;; tangle it
+(org-babel-tangle)
+;; load it
+(load-file (concat user-emacs-directory "config.el"))
+;; finally byte-compile it
+(byte-compile-file (concat user-emacs-directory "config.el"))  ;concat is similar to sprintf
+#+END_SRC
+
+The =init.el= should (after the first run) mirror the source blocks in
+the =init.org=. We can use =C-c C-v t= to run =org-babel-tangle=, which
+extracts the code blocks from the current file into a source-specific
+file (in this case a =.el=-file).
+
+To avoid doing this each time a change is made we can add a function to
+the =after-save-hook= ensuring to always tangle and byte-compile the
+=org=-document after changes.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defun tangle-init ()
+  "If the current buffer is 'init.org' the code-blocks are
+  tangled, and the tangled file is compiled."
+  (interactive)
+  (when (equal (buffer-file-name)
+           (expand-file-name "~/.doom.d/config.org"))
+    ;; Avoid running hooks when tangling.
+    (let ((prog-mode-hook nil))
+      (org-babel-tangle)
+      (byte-compile-file "~/.doom.d/config.el"))))
+
+(add-hook 'after-save-hook 'tangle-init)
+#+END_SRC
+
+* Appearance
+#+begin_src emacs-lisp :tangle yes
+;; Doom exposes five (optional) variables for controlling fonts in Doom. Here
+;; are the three important ones:
+;;
+;; + `doom-font'
+;; + `doom-variable-pitch-font'
+;; + `doom-big-font' -- used for `doom-big-font-mode'; use this for
+;;   presentations or streaming.
+;;
+;; They all accept either a font-spec, font string ("Input Mono-12"), or xlfd
+;; font string. You generally only need these two:
+(setq doom-font (font-spec :family "Source Code Pro" :size 16))
+
+;; There are two ways to load a theme. Both assume the theme is installed and
+;; available. You can either set `doom-theme' or manually load a theme with the
+;; `load-theme' function. This is the default:
+(setq doom-theme 'doom-one)
+
+(add-to-list 'default-frame-alist '(ns-appearance . dark))  ;;set the title bar dark
+
+;; This determines the style of line numbers in effect. If set to `nil', line
+;; numbers are disabled. For relative line numbers, set this to `relative'.
+(setq display-line-numbers-type 'relative)
+
+#+end_src
+* Org
+** org mode
+#+begin_src emacs-lisp :tangle yes
+(setq org-directory "~/Documents/org/")
+
+(after! org
+  (setq org-agenda-start-day "+0d"
+        org-archive-location (concat org-directory "archive/%s::")
+        org-log-done 'time
+        org-log-done 'note
+        org-priority-regexp ".*?\\(\\[#\\([A-Z0-9]\\)\\] ?\\)" ;set this property to default of org.el. The tweek doom does would screw up the priority.
+        org-todo-keywords
+        '((sequence
+           "TODO(t)"  ; A task that needs doing & is ready to do
+           "NEXT(n)"  ; next todo
+           "STRT(s)"  ; A task that is in progress
+           "WAIT(w)"  ; Something external is holding up this task
+           "HOLD(h)"  ; This task is paused/on hold because of me
+           "|"
+           "DONE(d)"  ; Task successfully completed
+           "KILL(k)")) ; Task was cancelled, aborted or is no longer applicable
+        org-todo-keyword-faces
+        '(("STRT" . +org-todo-active)
+          ("WAIT" . +org-todo-onhold)
+          ("HOLD" . +org-todo-onhold)
+          ("NEXT" . +org-todo-active)
+          ("PROJ" . +org-todo-project)))
+  (add-to-list 'org-modules 'org-habit t))
+
+;; (setq org-priority-faces '((?A . (:foreground "red" :weight bold))
+;;                            (?B . (:foreground "yellow"))
+;;                            (?C . (:foreground "green"))))
+#+end_src
+** org capture
+#+begin_src emacs-lisp :tangle yes
+(after! org
+  (setq org-capture-templates
+        '(("t" "Personal todo" entry
+           (file +org-capture-todo-file )
+           "* TODO %?\n%i\n%a" :prepend t)
+          ("n" "Personal notes" entry
+           (file +org-capture-notes-file )
+           "* %u %?\n%i\n%a" :prepend t )
+          ("j" "Journal" entry
+           (file+olp+datetree +org-capture-journal-file)
+           "* %U %?\n%i\n%a" :prepend t))))
+#+end_src
+** org bullets
+#+begin_src emacs-lisp :tangle yes
+
+(use-package org-bullets
+  :custom
+  (org-bullets-bullet-list '("◉" "○" "✸" "✿" "✜" "◆" "▶"))
+  (org-ellipsis "⤵")
+  :hook (org-mode . org-bullets-mode))
+
+#+end_src
+
+** org agenda
+#+begin_src emacs-lisp :tangle no
+
+(defun air-org-skip-subtree-if-habit ()
+  "Skip an agenda entry if it has a STYLE property equal to \"habit\"."
+  (let ((subtree-end (save-excursion (org-end-of-subtree t))))
+    (if (string= (org-entry-get nil "STYLE") "habit")
+    subtree-end
+      nil)))
+
+(defun air-org-skip-subtree-if-priority (priority)
+  "Skip an agenda subtree if it has a priority of PRIORITY.
+
+      PRIORITY may be one of the characters ?A, ?B, or ?C."
+  (let ((subtree-end (save-excursion (org-end-of-subtree t)))
+    (pri-value (* 1000 (- org-lowest-priority priority)))
+    (pri-current (org-get-priority (thing-at-point 'line t))))
+    (if (= pri-value pri-current)
+    subtree-end
+      nil)))
+
+
+(setq org-agenda-custom-commands
+      '(("d" "Daily agenda and all TODOs"
+         ((tags "PRIORITY=\"A\""
+                ((org-agenda-skip-function '(org-agenda-skip-entry-if 'todo 'done))
+                 (org-agenda-overriding-header "High-priority unfinished tasks:")))
+          (agenda "" ((org-agenda-span 1)))
+          (alltodo ""
+                   ((org-agenda-skip-function '(or (air-org-skip-subtree-if-habit)
+                                                   (air-org-skip-subtree-if-priority ?A)
+                                                   (org-agenda-skip-if nil '(scheduled deadline))))
+                    (org-agenda-overriding-header "ALL normal priority tasks:"))))
+         ((org-agenda-compact-blocks t)))))
+
+(defun air-pop-to-org-agenda (&optional split)
+  "Visit the org agenda, in the current window or a SPLIT."
+  (interactive "P")
+  (org-agenda nil "d")
+                    ;uncomment if want to set a
+  (when (not split)
+    (delete-other-windows)))
+
+(global-set-key (kbd "<f1>") 'org-clock-in)
+(global-set-key (kbd "<mouse-2>") 'org-clock-in)
+(global-set-key (kbd "<f2>") 'org-clock-out)
+(global-set-key (kbd "<f3>") 'air-pop-to-org-agenda)
+#+end_src
+** org super agenda
+#+begin_src emacs-lisp :tangle yes
+(org-super-agenda-mode)  ;enable org super agenda
+
+(setq org-agenda-skip-scheduled-if-done t
+      org-agenda-skip-deadline-if-done t
+      org-agenda-include-deadlines nil
+      org-agenda-include-diary t
+      org-agenda-block-separator nil
+      org-agenda-compact-blocks t
+      org-agenda-start-with-log-mode t)
+
+(setq org-agenda-custom-commands
+      '(("z" "Super zaen view"
+         ((agenda "" ((org-agenda-span 'day)
+                      (org-super-agenda-groups
+                       '((:name "Today"
+                          :time-grid t
+                          :date today
+                          :todo "TODAY"
+                          :scheduled today
+                          :order 1)))))
+          (alltodo "" ((org-agenda-overriding-header "")
+                       (org-super-agenda-groups
+                        '((:name "Next to do"
+                           :todo "NEXT"
+                           :order 1)
+                          (:name "Important"
+                           :tag "Important"
+                           :priority "A"
+                           :order 6)
+                          (:name "Due Today"
+                           :deadline today
+                           :order 2)
+                          (:name "Due Soon"
+                           :deadline future
+                           :order 8)
+                          (:name "Overdue"
+                           :deadline past
+                           :face (:background "#7f1b19")
+                           :order 7)
+                          (:name "Assignments"
+                           :tag "Assignment"
+                           :order 10)
+                          (:name "HGCAL/MAC"
+                           :tag "MAC"
+                           :tag "HGCAL"
+                           :order 12)
+                          (:name "EQ Detector"
+                           :tag "EQ"
+                           :order 13)
+                          (:name "Emacs"
+                           :tag "Emacs"
+                           :order 15)
+                          (:name "AnaBHEL"
+                           :tag "AnaBHEL"
+                           :order 14)
+                          (:name "To read"
+                           :tag "Read"
+                           :order 30)
+                          (:name "Waiting"
+                           :todo "WAITING"
+                           :order 20)
+                          (:name "trivial"
+                           :priority<= "C"
+                           :tag ("Trivial" "Unimportant")
+                           :todo ("SOMEDAY" )
+                           :order 90)
+                          (:discard
+                           (:tag ("lesson" "meeting" "Chore" "Routine" "Daily")
+                            :scheduled future))))))))))
+
+(after! evil-org-agenda
+  (setq org-super-agenda-header-map (copy-keymap evil-org-agenda-mode-map)))  ;overwrite org-super-agenda-header-map with evil-org-agenda-mode-map
+
+;; "Visit the org agenda, in the current window or a SPLIT."
+(defun air-pop-to-org-agenda (&optional split)
+  (interactive "P")
+  (org-agenda nil "z")
+  (when (not split)
+    (delete-other-windows)))
+
+(global-set-key (kbd "<f3>") 'air-pop-to-org-agenda)
+#+end_src
+
+** org notify
+#+begin_src emacs-lisp :tangle no
+(after! org
+  (require 'org-notify)
+  (org-notify-start))
+
+#+end_src
+* Completion
+** company
+#+begin_src emacs-lisp :tangle yes
+(after! company
+  (set-company-backend! :derived 'prog-mode 'company-dabbrev 'company-yasnippet)
+  (set-company-backend! 'python-mode 'company-dabbrev)
+  (add-to-list 'company-backends '(company-files
+                                   company-keywords
+                                   company-capf
+                                   company-dabbrev-code
+                                   company-etags
+                                   company-dabbrev)))
+(setq company-dabbrev-char-regexp "\\sw\\|\\s_")
+(push '("\\*Completions\\*"
+        (display-buffer-use-some-window display-buffer-pop-up-window)
+        (inhibit-same-window . t))
+      display-buffer-alist)
+#+end_src
+* Dired
+** dired-single
+#+begin_src emacs-lisp :tangle yes
+(use-package dired-single
+  :config
+  (evil-collection-define-key 'normal 'dired-mode-map
+    "h" 'dired-single-up-directory
+    "l" 'dired-single-buffer
+    "K" 'dired-do-kill-lines))
+#+end_src
+
+* Programming
+** C++
+#+begin_src emacs-lisp :tangle no
+(defun my-c-mode-common-hook ()
+  (setq flycheck-clang-include-path (list expand-file-name "../../../../")))
+(add-hook 'c-mode-common-hook 'my-c-mode-common-hook)
+#+end_src
+* Remote Server
+** ssh deploy
+#+begin_src emacs-lisp :tangle no
+(add-to-list 'load-path "~/.emacs.d/modules/tools/emacs-ssh-deploy/")
+(require 'ssh-deploy)
+(ssh-deploy-line-mode) ;; If you want mode-line feature
+(ssh-deploy-add-menu) ;; If you want menu-bar feature
+(ssh-deploy-add-after-save-hook) ;; If you want automatic upload support
+(ssh-deploy-add-find-file-hook) ;; If you want detecting remote changes support
+(global-set-key (kbd "C-c C-z") 'ssh-deploy-prefix-map)
+#+end_src
+* Terminal
+** term
+#+begin_src emacs-lisp :tangle no
+(after! term
+  (setq comint-move-point-for-output 'nil)
+  (setq comint-scroll-show-maximum-output 'nil))
+#+end_src
+
+* Evil
+#+begin_src emacs-lisp :tangle yes
+;; set evil insert mode keybindings to emacs keybindings
+(setq evil-insert-state-map (make-sparse-keymap))
+(define-key evil-insert-state-map (kbd "<escape>") 'evil-normal-state)
+(define-key evil-insert-state-map (kbd "C-g") 'evil-normal-state)
+#+end_src
+
+* Tools
+** hl-todo
+#+begin_src emacs-lisp :tangle no
+(after! hl-todo
+  (setq hl-todo-keyword-faces
+        `(
+          ("Discuss" error bold)
+          ("[#C]" warning bold))))
+#+end_src
+* Notes
+#+begin_src emacs-lisp :tangle yes
+;; Here are some additional functions/macros that could help you configure Doom:
+;;
+;; - `load!' for loading external *.el files relative to this one
+;; - `use-package' for configuring packages
+;; - `after!' for running code after a package has loaded
+;; - `add-load-path!' for adding directories to the `load-path', relative to
+;;   this file. Emacs searches the `load-path' when you load packages with
+;;   `require' or `use-package'.
+;; - `map!' for binding new keys
+;;
+;; To get information about any of these functions/macros, move the cursor over
+;; the highlighted symbol at press 'K' (non-evil users must press 'C-c g k').
+;; This will open documentation for it, including demos of how they are used.
+;;
+;; You can also try 'gd' (or 'C-c g d') to jump to their definition and see how
+;; they are implemented.
+#+end_src
